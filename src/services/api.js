@@ -1,4 +1,5 @@
-export const API_URL = "http://localhost:8000/api";
+export const API_URL =
+  import.meta.env.VITE_BACKEND_URL || "http://localhost:8000/api";
 
 export const login = async (username, password, totp_code = undefined) => {
   const res = await fetch(`${API_URL}/auth/login`, {

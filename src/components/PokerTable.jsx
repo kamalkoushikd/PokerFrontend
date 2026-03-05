@@ -10,7 +10,7 @@ const suitsMap = {
   's': { icon: '♠', color: 'var(--suit-black)' }
 };
 
-const WS_URL = 'ws://localhost:8000/ws/table';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/table';
 
 const PokerTable = () => {
     // Single Global Table
