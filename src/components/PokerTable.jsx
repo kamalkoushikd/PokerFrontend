@@ -118,21 +118,23 @@ const PokerTable = () => {
     }
 
     const { players, pot, communityCards, state, currentPlayerIndex } = gameState;
-    const isMyTurn = players[currentPlayerIndex]?.username === user?.username && state !== 'waiting' && state !== 'showdown';
+    const isMyTurn = players[currentPlayerIndex]?.username === user?.username && !['waiting', 'showdown', 'allin_runout', 'post_hand_reveal'].includes(state);
     const myPlayer = players.find(p => p.username === user?.username);
+    const isAllinRunout = state === 'allin_runout';
 
     // Helpers to render cards responsive
-    const renderCard = (cardStr, i) => {
+    const renderCard = (cardStr, i, animClass = 'animate-fade-in', delay = 0) => {
         if (!cardStr) return <div key={i} className="glass-panel" style={{ width: '45px', height: '65px', background: 'rgba(255,255,255,0.05)', flexShrink: 0 }} />;
         const rank = cardStr[0];
         const suit = cardStr[1];
         const { icon, color } = suitsMap[suit];
         return (
-            <div key={str_to_key(cardStr, i)} style={{ 
+            <div key={str_to_key(cardStr, i)} className={animClass} style={{ 
                 width: '45px', height: '65px', background: 'white', borderRadius: '4px', 
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '2px 4px',
-                color: color, fontWeight: 'bold', fontSize: '1rem', boxShadow: '0 4px 6px rgba(0,0,0,0.3)', flexShrink: 0
-            }} className="animate-fade-in">
+                color: color, fontWeight: 'bold', fontSize: '1rem', boxShadow: '0 4px 6px rgba(0,0,0,0.3)', flexShrink: 0,
+                animationDelay: `${delay}ms`
+            }}>
                 <span style={{ alignSelf: 'flex-start', lineHeight: 1 }}>{rank}</span>
                 <span style={{ alignSelf: 'center', fontSize: '1.5rem', lineHeight: 1 }}>{icon}</span>
                 <span style={{ alignSelf: 'flex-end', transform: 'rotate(180deg)', lineHeight: 1 }}>{rank}</span>
@@ -174,8 +176,27 @@ const PokerTable = () => {
                         <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--chip-gold)' }}>${pot}</span>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: 'var(--radius-md)', flexWrap: 'wrap', justifyContent: 'center' }}>
-                        {[0, 1, 2, 3, 4].map(i => renderCard(communityCards[i], i))}
+                    <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: 'var(--radius-md)', flexWrap: 'wrap', justifyContent: 'center', perspective: '600px' }}>
+                        {[0, 1, 2, 3, 4].map(i => {
+                            const card = communityCards[i];
+                            // Determine animation class based on which street this card belongs to
+                            let animClass = 'card-flip';
+                            let delay = 0;
+                            if (i < 3) {
+                                // Flop cards - staggered slide
+                                animClass = 'card-slide';
+                                delay = i * 150;
+                            } else if (i === 3) {
+                                // Turn card
+                                animClass = 'card-flip';
+                                delay = 0;
+                            } else {
+                                // River card
+                                animClass = 'card-flip';
+                                delay = 0;
+                            }
+                            return card ? renderCard(card, i, animClass, delay) : renderCard(null, i);
+                        })}
                     </div>
                 </div>
 
@@ -185,10 +206,9 @@ const PokerTable = () => {
                     {players.map((p, idx) => {
                         const isCurrent = currentPlayerIndex === idx && state !== 'waiting';
                         const isMe = p.username === user.username;
-                        
-                        // Show win prob only if they haven't folded and it's not preflop typically, 
-                        // but let's just show it always if > 0 to see the cool feature alive
-                        const showProb = p.winProb > 0 && !p.folded && state !== 'waiting';
+                        // During all-in runout, show everyone's probability (cards are face-up)
+                        // Otherwise, only show own probability
+                        const showProb = (isAllinRunout || isMe) && p.winProb > 0 && !p.folded && state !== 'waiting';
 
                         return (
                             <div key={p.username} className={`glass-card ${isCurrent ? 'animate-pulse' : ''}`} style={{ 
@@ -202,8 +222,8 @@ const PokerTable = () => {
                                 <div style={{ color: 'var(--chip-gold)', fontWeight: 'bold', marginBottom: '0.3rem', fontSize: '1.1rem' }}>${p.chips}</div>
                                 
                                 {showProb && (
-                                     <div style={{ position: 'absolute', top: '-10px', right: '-10px', background: 'var(--accent-color)', color: 'white', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '10px', boxShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
-                                        {p.winProb}% Win
+                                     <div className="animate-fade-in" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)', transition: 'all 0.3s ease' }}>
+                                        {p.winProb}%
                                      </div>
                                 )}
 
@@ -214,11 +234,10 @@ const PokerTable = () => {
                                 {/* Show cards if it's us or showdown mode where cards are revealed or post_hand_reveal where specific ones are revealed */}
                                 <div style={{ display: 'flex', gap: '0.1rem', justifyContent: 'center' }}>
                                     {(p.cards && p.cards.length > 0) ? (
-                                        p.cards.map((c, i) => <div key={i} style={{ transform: 'scale(0.8)', margin: '-5px -3px' }}>{renderCard(c, i)}</div>)
+                                        p.cards.map((c, i) => <div key={i} style={{ transform: 'scale(0.8)', margin: '-5px -3px' }}>{renderCard(c, i, 'card-deal', i * 100)}</div>)
                                     ) : (
                                         isMe && privateCards.length > 0 ? (
-                                           // For 'me', if post hand reveal, still show my cards normally, but others see what I chose
-                                           privateCards.map((c, i) => <div key={i} style={{ transform: 'scale(0.8)', margin: '-5px -3px' }}>{renderCard(c, i)}</div>)
+                                           privateCards.map((c, i) => <div key={i} style={{ transform: 'scale(0.8)', margin: '-5px -3px' }}>{renderCard(c, i, 'card-deal', i * 150)}</div>)
                                         ) : (
                                             !p.folded && state !== 'waiting' ? (
                                                 <div style={{ display: 'flex', gap: '2px' }}>

@@ -175,6 +175,82 @@ body {
   animation: pulse-glow 2s infinite;
 }
 
+/* Card Dealing Animation */
+@keyframes dealCard {
+  0% {
+    opacity: 0;
+    transform: translateY(-80px) scale(0.3) rotate(-15deg);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(5px) scale(1.05) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+@keyframes flipCard {
+  0% {
+    transform: rotateY(90deg) scale(0.8);
+    opacity: 0;
+  }
+  50% {
+    transform: rotateY(-10deg) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: rotateY(0deg) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes burnCard {
+  0% {
+    opacity: 0.6;
+    transform: translateX(-30px) rotate(-5deg);
+    filter: brightness(0.4);
+  }
+  50% {
+    opacity: 0.3;
+    transform: translateX(30px) rotate(5deg);
+    filter: brightness(0.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(60px) rotate(10deg);
+    filter: brightness(0);
+  }
+}
+
+@keyframes slideInCards {
+  0% {
+    opacity: 0;
+    transform: translateX(-30px) scale(0.7);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(3px) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.card-deal {
+  animation: dealCard 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.card-flip {
+  animation: flipCard 0.4s ease-out forwards;
+}
+
+.card-slide {
+  animation: slideInCards 0.4s ease-out forwards;
+}
+
 /* Poker Table Specifics Base */
 .poker-table-surface {
   background: radial-gradient(ellipse at center, #0f766e 0%, #064e3b 80%, #022c22 100%);
