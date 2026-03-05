@@ -22,9 +22,16 @@ const PokerTable = () => {
     const [privateCards, setPrivateCards] = useState([]);
     const [raiseAmount, setRaiseAmount] = useState(0);
     const [timeLeft, setTimeLeft] = useState(null);
-    const [editStackTarget, setEditStackTarget] = useState(null); // username being edited
+    const [editStackTarget, setEditStackTarget] = useState(null);
     const [editStackValue, setEditStackValue] = useState('');
     const [isAway, setIsAway] = useState(false);
+    const raiseInputRef = useRef(null);
+    // Refs for stable keyboard handler
+    const gameStateRef = useRef(null);
+    const raiseAmountRef = useRef(0);
+    const userRef = useRef(null);
+    useEffect(() => { userRef.current = user; }, [user]);
+    useEffect(() => { raiseAmountRef.current = raiseAmount; }, [raiseAmount]);
     
     // Use a ref to track previous state for sounds (avoids re-creating WebSocket)
     const prevStateRef = useRef(null);
@@ -54,8 +61,15 @@ const PokerTable = () => {
                 const message = JSON.parse(event.data);
                 if (message.type === 'table_state') {
                     const prevState = prevStateRef.current;
+                    gameStateRef.current = message.data;
                     setGameState(message.data);
-                    setRaiseAmount(Math.max(message.data.currentBet * 2, 40));
+                    setRaiseAmount(prev => {
+                        // Only auto-update raise amount when it's a new hand (state became preflop)
+                        if (prevState?.state !== 'preflop' && message.data.state === 'preflop') {
+                            return Math.max(message.data.currentBet * 2, message.data.bigBlind * 2);
+                        }
+                        return prev;
+                    });
                     
                     // Sound Logic
                     if (prevState && message.data) {
@@ -115,7 +129,7 @@ const PokerTable = () => {
         };
     }, [tableId, user, token, navigate]);
 
-    // Countdown timer effect
+    // Countdown timer effect — float timeLeft for smooth SVG ring
     useEffect(() => {
         if (!gameState?.turnDeadline) {
             setTimeLeft(null);
@@ -123,11 +137,11 @@ const PokerTable = () => {
         }
         const updateTimer = () => {
             const now = Date.now() / 1000;
-            const remaining = Math.max(0, Math.ceil(gameState.turnDeadline - now));
+            const remaining = Math.max(0, gameState.turnDeadline - now);
             setTimeLeft(remaining);
         };
         updateTimer();
-        const interval = setInterval(updateTimer, 250);
+        const interval = setInterval(updateTimer, 100);
         return () => clearInterval(interval);
     }, [gameState?.turnDeadline]);
 
@@ -145,6 +159,24 @@ const PokerTable = () => {
         }
         navigate('/lobby');
     };
+
+    // Keyboard shortcuts: F=fold, C/Space=call, R=focus raise input
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            const gs = gameStateRef.current;
+            if (!gs) return;
+            const { players, currentPlayerIndex, state: phase } = gs;
+            const active = !['waiting', 'showdown', 'allin_runout', 'post_hand_reveal'].includes(phase);
+            const myTurn = active && players[currentPlayerIndex]?.username === userRef.current?.username;
+            if (!myTurn) return;
+            if (e.key.toLowerCase() === 'f') { e.preventDefault(); handleAction('fold'); }
+            else if (e.key.toLowerCase() === 'c' || e.key === ' ') { e.preventDefault(); handleAction('call'); }
+            else if (e.key.toLowerCase() === 'r') { e.preventDefault(); raiseInputRef.current?.focus(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []); // stable — reads from refs
 
     const toggleAway = () => {
         const newAway = !isAway;
@@ -217,7 +249,7 @@ const PokerTable = () => {
                 </div>
                 <div style={{ color: 'var(--text-muted)', fontWeight: '500', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     Status: <span style={{ color: state === 'waiting' ? 'orange' : 'var(--accent-color)', textTransform: 'capitalize' }}>{state === 'allin_runout' ? 'All-In Runout' : state}</span>
-                    {timeLeft !== null && timeLeft > 0 && (
+                    {timeLeft !== null && timeLeft > 0 && ((
                         <span style={{ 
                             background: timeLeft <= 5 ? 'rgba(239,68,68,0.3)' : timeLeft <= 10 ? 'rgba(251,191,36,0.2)' : 'rgba(34,197,94,0.15)', 
                             color: timeLeft <= 5 ? '#ef4444' : timeLeft <= 10 ? 'var(--chip-gold)' : '#22c55e',
@@ -225,9 +257,9 @@ const PokerTable = () => {
                             border: `1px solid ${timeLeft <= 5 ? '#ef4444' : timeLeft <= 10 ? 'var(--chip-gold)' : '#22c55e'}`,
                             animation: timeLeft <= 5 ? 'pulse-glow 0.5s infinite' : 'none'
                         }}>
-                            ⏱ {timeLeft}s
+                            ⏱ {Math.ceil(timeLeft)}s
                         </span>
-                    )}
+                    ))}
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <button
@@ -276,7 +308,7 @@ const PokerTable = () => {
                 <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.8rem', zIndex: 5 }}>
                     <div className="glass-card" style={{ padding: '0.3rem 1.2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', borderRadius: 'var(--radius-xl)' }}>
                         <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>POT</span>
-                        <span style={{ fontSize: '1.3rem', fontWeight: 'bold', color: 'var(--chip-gold)' }}>${pot}</span>
+                        <span key={pot} className="pot-pop" style={{ fontSize: '1.3rem', fontWeight: 'bold', color: 'var(--chip-gold)', display: 'inline-block' }}>${pot}</span>
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.3rem', background: 'rgba(0,0,0,0.3)', padding: '0.6rem', borderRadius: 'var(--radius-md)', perspective: '600px' }}>
@@ -357,7 +389,7 @@ const PokerTable = () => {
                                         fontSize="11" fontWeight="bold"
                                         style={{ fontFamily: 'monospace' }}
                                     >
-                                        {timeLeft}s
+                                        {Math.ceil(timeLeft)}s
                                     </text>
                                 </svg>
                             )}
@@ -407,13 +439,14 @@ const PokerTable = () => {
                                 )}
 
                                 {showProb && (
-                                     <div className="animate-fade-in" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.65rem', fontWeight: 'bold', padding: '2px 5px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)' }}>
+                                     <div className="animate-fade-in" title="Estimated win probability" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.6rem', fontWeight: 'bold', padding: '2px 5px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)', textAlign: 'center', lineHeight: 1.3 }}>
+                                        <div style={{ opacity: 0.8, fontSize: '0.5rem', letterSpacing: '0.03em' }}>WIN</div>
                                         {p.winProb}%
                                      </div>
                                 )}
 
                                 {p.bet > 0 && (
-                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', background: 'rgba(0,0,0,0.4)', padding: '1px 4px', borderRadius: '4px', marginTop: '0.2rem' }}>
+                                    <div key={p.bet} className="bet-appear" style={{ color: 'var(--chip-gold)', fontSize: '0.7rem', background: 'rgba(0,0,0,0.4)', padding: '1px 4px', borderRadius: '4px', marginTop: '0.2rem' }}>
                                         Bet: ${p.bet}
                                     </div>
                                 )}
@@ -445,32 +478,82 @@ const PokerTable = () => {
 
             {/* Action Bar */}
             <footer className="glass-panel" style={{ padding: '0.8rem', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '0.8rem', opacity: isMyTurn ? 1 : 0.5, transition: 'opacity 0.3s' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 100px' }}>
-                     <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Call: <span style={{ color: 'white', fontWeight: 'bold' }}>${gameState.currentBet}</span></span>
-                     <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Your Bet: <span style={{ color: 'white', fontWeight: 'bold' }}>${myPlayer?.bet || 0}</span></span>
+                {/* Left: info column */}
+                <div style={{ display: 'flex', flexDirection: 'column', flex: '0 0 130px', gap: '0.2rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                        To call: <span style={{ color: 'white', fontWeight: 'bold' }}>${Math.max(0, gameState.currentBet - (myPlayer?.bet || 0))}</span>
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                        Your bet: <span style={{ color: 'white', fontWeight: 'bold' }}>${myPlayer?.bet || 0}</span>
+                    </span>
+                    {isMyTurn && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.62rem', marginTop: '0.15rem', letterSpacing: '0.02em' }}>
+                            [F] Fold · [C] Call · [R] Raise
+                        </span>
+                    )}
                 </div>
-                
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-end', flex: '1 1 200px' }}>
-                    <button className="btn-secondary" disabled={!isMyTurn} onClick={() => handleAction('fold')} style={{ border: '1px solid var(--suit-red)', color: 'var(--suit-red)', flex: 1 }}>
-                        Fold
+
+                {/* Right: buttons */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-end', justifyContent: 'flex-end', flex: '1 1 280px' }}>
+                    <button className="btn-secondary" disabled={!isMyTurn} onClick={() => handleAction('fold')}
+                        style={{ border: '1px solid var(--suit-red)', color: 'var(--suit-red)', flex: '0 0 auto', minWidth: '75px' }}>
+                        Fold <span style={{ fontSize: '0.62rem', opacity: 0.6 }}>[F]</span>
                     </button>
-                    <button className="btn-primary" disabled={!isMyTurn} onClick={() => handleAction('call')} style={{ flex: 1 }}>
-                        Call {gameState.currentBet > (myPlayer?.bet || 0) ? `$${gameState.currentBet - (myPlayer?.bet || 0)}` : '(Check)'}
+                    <button className="btn-primary" disabled={!isMyTurn} onClick={() => handleAction('call')}
+                        style={{ flex: '0 0 auto', minWidth: '110px' }}>
+                        {gameState.currentBet > (myPlayer?.bet || 0)
+                            ? `Call $${gameState.currentBet - (myPlayer?.bet || 0)}`
+                            : 'Check ✓'}
+                        <span style={{ fontSize: '0.62rem', opacity: 0.7 }}> [C]</span>
                     </button>
-                    
-                    <div style={{ display: 'flex', gap: '0.2rem', alignItems: 'stretch', background: 'rgba(0,0,0,0.2)', padding: '0.3rem', borderRadius: 'var(--radius-sm)', flex: 2 }}>
-                        <input 
-                            type="number" 
-                            className="input-field" 
-                            style={{ width: '70px', padding: '0.5rem', flex: 1 }} 
-                            value={raiseAmount} 
-                            onChange={e => setRaiseAmount(Number(e.target.value))}
-                            min={gameState.currentBet + 20}
-                            disabled={!isMyTurn}
-                        />
-                        <button className="btn-secondary" disabled={!isMyTurn} onClick={() => handleAction('raise', raiseAmount)} style={{ flex: 1, padding: '0.5rem' }}>
-                            Raise
-                        </button>
+
+                    {/* Raise controls */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: '1 1 210px' }}>
+                        {/* Quick raise presets */}
+                        <div style={{ display: 'flex', gap: '0.2rem' }}>
+                            {(() => {
+                                const minR = gameState.minRaise || gameState.bigBlind || 20;
+                                const myBet = myPlayer?.bet || 0;
+                                const halfPot = Math.max(gameState.currentBet + minR, gameState.currentBet + Math.round(pot / 2));
+                                const fullPot = Math.max(gameState.currentBet + minR, gameState.currentBet + pot);
+                                const allIn = myBet + (myPlayer?.chips || 0);
+                                return [
+                                    { label: '½ Pot', val: halfPot },
+                                    { label: 'Pot', val: fullPot },
+                                    { label: 'All In', val: allIn },
+                                ].map(({ label, val }) => (
+                                    <button key={label} className="btn-secondary" disabled={!isMyTurn}
+                                        onClick={() => setRaiseAmount(val)}
+                                        style={{ flex: 1, padding: '0.18rem 0.25rem', fontSize: '0.68rem',
+                                            borderColor: 'rgba(251,191,36,0.35)', color: 'var(--chip-gold)' }}>
+                                        {label}
+                                    </button>
+                                ));
+                            })()}
+                        </div>
+                        {/* Raise input row */}
+                        <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                            <input
+                                ref={raiseInputRef}
+                                type="number"
+                                className="input-field"
+                                style={{ width: '70px', padding: '0.4rem 0.5rem', flex: 1, fontSize: '0.9rem' }}
+                                value={raiseAmount}
+                                onChange={e => setRaiseAmount(Number(e.target.value))}
+                                min={(gameState.minRaise || 20) + gameState.currentBet}
+                                disabled={!isMyTurn}
+                                onKeyDown={e => { if (e.key === 'Enter' && isMyTurn) handleAction('raise', raiseAmount); }}
+                            />
+                            <button className="btn-secondary" disabled={!isMyTurn}
+                                onClick={() => handleAction('raise', raiseAmount)}
+                                style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
+                                Raise
+                                <span style={{ color: 'var(--chip-gold)', fontWeight: 'bold', marginLeft: '0.3rem' }}>
+                                    +${Math.max(0, raiseAmount - (myPlayer?.bet || 0))}
+                                </span>
+                                <span style={{ fontSize: '0.62rem', opacity: 0.6 }}> [R]</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </footer>
