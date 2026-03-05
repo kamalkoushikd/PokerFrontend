@@ -21,6 +21,7 @@ const PokerTable = () => {
     const [gameState, setGameState] = useState(null);
     const [privateCards, setPrivateCards] = useState([]);
     const [raiseAmount, setRaiseAmount] = useState(0);
+    const [timeLeft, setTimeLeft] = useState(null);
     
     // Use a ref to track previous state for sounds (avoids re-creating WebSocket)
     const prevStateRef = useRef(null);
@@ -105,6 +106,22 @@ const PokerTable = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tableId, user, token, navigate]);
 
+    // Countdown timer effect
+    useEffect(() => {
+        if (!gameState?.turnDeadline) {
+            setTimeLeft(null);
+            return;
+        }
+        const updateTimer = () => {
+            const now = Date.now() / 1000;
+            const remaining = Math.max(0, Math.ceil(gameState.turnDeadline - now));
+            setTimeLeft(remaining);
+        };
+        updateTimer();
+        const interval = setInterval(updateTimer, 250);
+        return () => clearInterval(interval);
+    }, [gameState?.turnDeadline]);
+
     const handleAction = (action, amount = 0) => {
         if (ws.current && ws.current.readyState === WebSocket.OPEN) {
             ws.current.send(JSON.stringify({ action, amount }));
@@ -152,8 +169,19 @@ const PokerTable = () => {
                         <Users size={18} /> Global Table
                     </h2>
                 </div>
-                <div style={{ color: 'var(--text-muted)', fontWeight: '500', fontSize: '0.9rem' }}>
-                    Status: <span style={{ color: state === 'waiting' ? 'orange' : 'var(--accent-color)', textTransform: 'capitalize' }}>{state}</span>
+                <div style={{ color: 'var(--text-muted)', fontWeight: '500', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    Status: <span style={{ color: state === 'waiting' ? 'orange' : 'var(--accent-color)', textTransform: 'capitalize' }}>{state === 'allin_runout' ? 'All-In Runout' : state}</span>
+                    {timeLeft !== null && timeLeft > 0 && (
+                        <span style={{ 
+                            background: timeLeft <= 3 ? 'rgba(239,68,68,0.3)' : 'rgba(251,191,36,0.2)', 
+                            color: timeLeft <= 3 ? '#ef4444' : 'var(--chip-gold)',
+                            padding: '2px 8px', borderRadius: '12px', fontSize: '0.85rem', fontWeight: 'bold',
+                            border: timeLeft <= 3 ? '1px solid #ef4444' : '1px solid var(--chip-gold)',
+                            animation: timeLeft <= 3 ? 'pulse-glow 0.5s infinite' : 'none'
+                        }}>
+                            ⏱ {timeLeft}s
+                        </span>
+                    )}
                 </div>
                 <button onClick={() => navigate('/lobby')} className="btn-secondary" style={{ padding: '0.4rem 0.8rem', display: 'flex', gap: '0.5rem', fontSize: '0.9rem' }}>
                     <LogOut size={16}/> Leave
@@ -213,7 +241,7 @@ const PokerTable = () => {
                         return (
                             <div key={p.username} className={`glass-card ${isCurrent ? 'animate-pulse' : ''}`} style={{ 
                                 padding: '0.8rem', flex: '1 1 120px', maxWidth: '180px', textAlign: 'center', position: 'relative',
-                                border: isCurrent ? '2px solid var(--accent-color)' : '1px solid var(--glass-border)',
+                                border: isCurrent ? `2px solid ${timeLeft !== null && timeLeft <= 3 ? '#ef4444' : 'var(--accent-color)'}` : '1px solid var(--glass-border)',
                                 opacity: p.folded ? 0.4 : 1, transition: 'all 0.3s ease'
                             }}>
                                 <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.2rem', color: isMe ? 'var(--accent-color)' : 'white' }}>
