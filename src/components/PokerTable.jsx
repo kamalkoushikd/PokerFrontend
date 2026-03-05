@@ -22,6 +22,9 @@ const PokerTable = () => {
     const [privateCards, setPrivateCards] = useState([]);
     const [raiseAmount, setRaiseAmount] = useState(0);
     const [timeLeft, setTimeLeft] = useState(null);
+    const [editStackTarget, setEditStackTarget] = useState(null); // username being edited
+    const [editStackValue, setEditStackValue] = useState('');
+    const [isAway, setIsAway] = useState(false);
     
     // Use a ref to track previous state for sounds (avoids re-creating WebSocket)
     const prevStateRef = useRef(null);
@@ -67,7 +70,6 @@ const PokerTable = () => {
                         if (message.data.pot > prevState.pot) {
                             callRaiseSound.current.play().catch(e=>console.log(e));
                         }
-                        // Fold sound if someone folded
                         const prevPlayers = prevState.players;
                         const newPlayers = message.data.players;
                         if (prevPlayers && prevPlayers.length === newPlayers.length) {
@@ -78,7 +80,6 @@ const PokerTable = () => {
                              });
                         }
                     }
-                    // Update the ref AFTER processing sounds
                     prevStateRef.current = message.data;
                 } else if (message.type === 'private_state') {
                     setPrivateCards(message.data.cards || []);
@@ -98,7 +99,16 @@ const PokerTable = () => {
             }
         };
 
+        // When the tab closes, tell the server we're going offline (keep seat)
+        const handleBeforeUnload = () => {
+            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                ws.current.send(JSON.stringify({ action: 'set_away' }));
+            }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
         return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
             if (ws.current) {
                 ws.current.close();
             }
@@ -127,6 +137,27 @@ const PokerTable = () => {
             if (action === 'fold') foldSound.current.play().catch(e=>console.log(e));
             if (action === 'call' || action === 'raise') callRaiseSound.current.play().catch(e=>console.log(e));
         }
+    };
+
+    const handleLeave = () => {
+        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.send(JSON.stringify({ action: 'leave_table' }));
+        }
+        navigate('/lobby');
+    };
+
+    const toggleAway = () => {
+        const newAway = !isAway;
+        setIsAway(newAway);
+        handleAction(newAway ? 'set_away' : 'set_active');
+    };
+
+    const submitEditStack = (targetUsername) => {
+        const chips = parseInt(editStackValue, 10);
+        if (isNaN(chips) || chips < 0) return;
+        handleAction('edit_stack', chips, targetUsername);
+        setEditStackTarget(null);
+        setEditStackValue('');
     };
 
     if (!gameState) {
@@ -188,19 +219,30 @@ const PokerTable = () => {
                     Status: <span style={{ color: state === 'waiting' ? 'orange' : 'var(--accent-color)', textTransform: 'capitalize' }}>{state === 'allin_runout' ? 'All-In Runout' : state}</span>
                     {timeLeft !== null && timeLeft > 0 && (
                         <span style={{ 
-                            background: timeLeft <= 3 ? 'rgba(239,68,68,0.3)' : 'rgba(251,191,36,0.2)', 
-                            color: timeLeft <= 3 ? '#ef4444' : 'var(--chip-gold)',
+                            background: timeLeft <= 5 ? 'rgba(239,68,68,0.3)' : timeLeft <= 10 ? 'rgba(251,191,36,0.2)' : 'rgba(34,197,94,0.15)', 
+                            color: timeLeft <= 5 ? '#ef4444' : timeLeft <= 10 ? 'var(--chip-gold)' : '#22c55e',
                             padding: '2px 8px', borderRadius: '12px', fontSize: '0.85rem', fontWeight: 'bold',
-                            border: timeLeft <= 3 ? '1px solid #ef4444' : '1px solid var(--chip-gold)',
-                            animation: timeLeft <= 3 ? 'pulse-glow 0.5s infinite' : 'none'
+                            border: `1px solid ${timeLeft <= 5 ? '#ef4444' : timeLeft <= 10 ? 'var(--chip-gold)' : '#22c55e'}`,
+                            animation: timeLeft <= 5 ? 'pulse-glow 0.5s infinite' : 'none'
                         }}>
                             ⏱ {timeLeft}s
                         </span>
                     )}
                 </div>
-                <button onClick={() => navigate('/lobby')} className="btn-secondary" style={{ padding: '0.4rem 0.8rem', display: 'flex', gap: '0.5rem', fontSize: '0.9rem' }}>
-                    <LogOut size={16}/> Leave
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <button
+                        onClick={toggleAway}
+                        className={isAway ? 'btn-primary' : 'btn-secondary'}
+                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', 
+                            border: isAway ? '1px solid #f97316' : '1px solid var(--glass-border)',
+                            color: isAway ? '#f97316' : 'var(--text-muted)' }}
+                    >
+                        {isAway ? '🔄 Back' : '💤 Away'}
+                    </button>
+                    <button onClick={handleLeave} className="btn-secondary" style={{ padding: '0.4rem 0.8rem', display: 'flex', gap: '0.5rem', fontSize: '0.9rem' }}>
+                        <LogOut size={16}/> Leave
+                    </button>
+                </div>
             </header>
 
             {/* Host Approval Panel */}
@@ -250,53 +292,151 @@ const PokerTable = () => {
 
                 {/* Players positioned around the table */}
                 {players.map((p, idx) => {
-                    const isCurrent = currentPlayerIndex === idx && state !== 'waiting';
+                    const isCurrent = currentPlayerIndex === idx && !['waiting', 'showdown', 'allin_runout', 'post_hand_reveal'].includes(state);
                     const isMe = p.username === user.username;
                     const showProb = (isAllinRunout || isMe) && p.winProb > 0 && !p.folded && state !== 'waiting';
                     const pos = getPlayerPosition(idx, players.length);
+                    const isOffline = !p.isOnline;
+                    const isAwaySeat = p.isAway;
+
+                    // SVG timer ring parameters
+                    const RING_R = 52; // radius (px) around the card area
+                    const RING_CIRC = 2 * Math.PI * RING_R; // ~326
+                    const TURN_TOTAL = gameState.turnTimeLimit || 30;
+                    const progress = isCurrent && timeLeft !== null ? timeLeft / TURN_TOTAL : 0;
+                    const dashOffset = RING_CIRC * (1 - progress);
+                    // Color: green → yellow → red as time decreases
+                    const ringColor = isCurrent && timeLeft !== null
+                        ? timeLeft > 15 ? '#22c55e'
+                        : timeLeft > 8 ? '#f59e0b'
+                        : '#ef4444'
+                        : 'transparent';
+                    const ringGlow = isCurrent && timeLeft !== null
+                        ? timeLeft > 15 ? 'drop-shadow(0 0 6px #22c55e)'
+                        : timeLeft > 8 ? 'drop-shadow(0 0 6px #f59e0b)'
+                        : 'drop-shadow(0 0 8px #ef4444)'
+                        : 'none';
 
                     return (
-                        <div key={p.username} className={`glass-card ${isCurrent ? 'animate-pulse' : ''}`} style={{ 
+                        <div key={p.username} style={{ 
                             position: 'absolute', ...pos, transform: 'translate(-50%, -50%)',
-                            padding: '0.6rem', width: '140px', textAlign: 'center',
-                            border: isCurrent ? `2px solid ${timeLeft !== null && timeLeft <= 3 ? '#ef4444' : 'var(--accent-color)'}` : '1px solid var(--glass-border)',
-                            opacity: p.folded ? 0.4 : 1, transition: 'all 0.3s ease', zIndex: 6
+                            zIndex: 6, width: '140px', textAlign: 'center',
                         }}>
-                            <div style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.1rem', color: isMe ? 'var(--accent-color)' : 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {p.fullName || p.username} {isMe && '(You)'}
-                            </div>
-                            <div style={{ color: 'var(--chip-gold)', fontWeight: 'bold', fontSize: '0.95rem' }}>${p.chips}</div>
-                            
-                            {showProb && (
-                                 <div className="animate-fade-in" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.65rem', fontWeight: 'bold', padding: '2px 5px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)' }}>
-                                    {p.winProb}%
-                                 </div>
+                            {/* SVG Timer Ring - rendered around the card box when it's this player's turn */}
+                            {isCurrent && timeLeft !== null && (
+                                <svg
+                                    style={{ position: 'absolute', top: '50%', left: '50%',
+                                        transform: 'translate(-50%, -50%)',
+                                        width: `${RING_R * 2 + 16}px`, height: `${RING_R * 2 + 16}px`,
+                                        pointerEvents: 'none', zIndex: 7,
+                                        filter: ringGlow }}
+                                    viewBox={`0 0 ${RING_R * 2 + 16} ${RING_R * 2 + 16}`}
+                                >
+                                    {/* Background ring */}
+                                    <circle
+                                        cx={RING_R + 8} cy={RING_R + 8} r={RING_R}
+                                        fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="4"
+                                    />
+                                    {/* Progress ring */}
+                                    <circle
+                                        cx={RING_R + 8} cy={RING_R + 8} r={RING_R}
+                                        fill="none"
+                                        stroke={ringColor}
+                                        strokeWidth="4"
+                                        strokeLinecap="round"
+                                        strokeDasharray={RING_CIRC}
+                                        strokeDashoffset={dashOffset}
+                                        transform={`rotate(-90 ${RING_R + 8} ${RING_R + 8})`}
+                                        style={{ transition: 'stroke-dashoffset 0.25s linear, stroke 0.5s ease' }}
+                                    />
+                                    {/* Timer text in ring */}
+                                    <text
+                                        x={RING_R + 8} y={RING_R + 8 - RING_R - 6}
+                                        textAnchor="middle" dominantBaseline="middle"
+                                        fill={ringColor}
+                                        fontSize="11" fontWeight="bold"
+                                        style={{ fontFamily: 'monospace' }}
+                                    >
+                                        {timeLeft}s
+                                    </text>
+                                </svg>
                             )}
 
-                            {p.bet > 0 && (
-                                <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', background: 'rgba(0,0,0,0.4)', padding: '1px 4px', borderRadius: '4px', marginTop: '0.2rem' }}>
-                                    Bet: ${p.bet}
+                            <div className={`glass-card ${isCurrent ? 'animate-pulse' : ''}`} style={{ 
+                                padding: '0.6rem',
+                                border: isCurrent
+                                    ? `2px solid ${ringColor !== 'transparent' ? ringColor : 'var(--accent-color)'}`
+                                    : isOffline ? '1px solid #6b7280' : '1px solid var(--glass-border)',
+                                opacity: p.folded ? 0.4 : isOffline ? 0.6 : 1,
+                                transition: 'all 0.3s ease',
+                            }}>
+                                <div style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.1rem', color: isMe ? 'var(--accent-color)' : isOffline ? '#9ca3af' : 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
+                                    {isOffline && <span title="Offline" style={{ fontSize: '0.7rem' }}>📴</span>}
+                                    {!isOffline && isAwaySeat && <span title="Away" style={{ fontSize: '0.7rem' }}>💤</span>}
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {p.fullName || p.username} {isMe && '(You)'}
+                                    </span>
                                 </div>
-                            )}
-                            
-                            {/* Cards */}
-                            <div style={{ display: 'flex', gap: '0.1rem', justifyContent: 'center', marginTop: '0.3rem' }}>
-                                {(p.cards && p.cards.length > 0) ? (
-                                    p.cards.map((c, i) => <div key={i} style={{ transform: 'scale(0.7)', margin: '-8px -5px' }}>{renderCard(c, i, 'card-deal', i * 100)}</div>)
-                                ) : (
-                                    isMe && privateCards.length > 0 ? (
-                                       privateCards.map((c, i) => <div key={i} style={{ transform: 'scale(0.7)', margin: '-8px -5px' }}>{renderCard(c, i, 'card-deal', i * 150)}</div>)
-                                    ) : (
-                                        !p.folded && state !== 'waiting' ? (
-                                            <div style={{ display: 'flex', gap: '2px' }}>
-                                                <div style={{ width: '20px', height: '28px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 3px, white 3px, white 6px)', borderRadius: '2px', border: '1px solid white' }} />
-                                                <div style={{ width: '20px', height: '28px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 3px, white 3px, white 6px)', borderRadius: '2px', border: '1px solid white' }} />
-                                            </div>
-                                        ) : null
-                                    )
+                                <div style={{ color: 'var(--chip-gold)', fontWeight: 'bold', fontSize: '0.95rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+                                    ${p.chips}
+                                    {/* Host edit stack button */}
+                                    {isHost && !isMe && (
+                                        <button
+                                            onClick={() => { setEditStackTarget(p.username); setEditStackValue(String(p.chips)); }}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chip-gold)', fontSize: '0.7rem', padding: '0', lineHeight: 1, opacity: 0.7 }}
+                                            title="Edit stack"
+                                        >✏️</button>
+                                    )}
+                                </div>
+                                
+                                {/* Edit stack inline form */}
+                                {isHost && editStackTarget === p.username && (
+                                    <div className="animate-fade-in" style={{ display: 'flex', gap: '2px', marginTop: '0.3rem' }}>
+                                        <input
+                                            type="number"
+                                            className="input-field"
+                                            value={editStackValue}
+                                            onChange={e => setEditStackValue(e.target.value)}
+                                            style={{ width: '55px', padding: '2px 4px', fontSize: '0.75rem' }}
+                                            autoFocus
+                                            onKeyDown={e => { if (e.key === 'Enter') submitEditStack(p.username); if (e.key === 'Escape') setEditStackTarget(null); }}
+                                        />
+                                        <button className="btn-primary" onClick={() => submitEditStack(p.username)} style={{ padding: '2px 5px', fontSize: '0.7rem' }}>✓</button>
+                                        <button className="btn-secondary" onClick={() => setEditStackTarget(null)} style={{ padding: '2px 5px', fontSize: '0.7rem' }}>✗</button>
+                                    </div>
                                 )}
-                            </div>
 
+                                {showProb && (
+                                     <div className="animate-fade-in" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.65rem', fontWeight: 'bold', padding: '2px 5px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)' }}>
+                                        {p.winProb}%
+                                     </div>
+                                )}
+
+                                {p.bet > 0 && (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', background: 'rgba(0,0,0,0.4)', padding: '1px 4px', borderRadius: '4px', marginTop: '0.2rem' }}>
+                                        Bet: ${p.bet}
+                                    </div>
+                                )}
+                                
+                                {/* Cards */}
+                                <div style={{ display: 'flex', gap: '0.1rem', justifyContent: 'center', marginTop: '0.3rem' }}>
+                                    {(p.cards && p.cards.length > 0) ? (
+                                        p.cards.map((c, i) => <div key={i} style={{ transform: 'scale(0.7)', margin: '-8px -5px' }}>{renderCard(c, i, 'card-deal', i * 100)}</div>)
+                                    ) : (
+                                        isMe && privateCards.length > 0 ? (
+                                           privateCards.map((c, i) => <div key={i} style={{ transform: 'scale(0.7)', margin: '-8px -5px' }}>{renderCard(c, i, 'card-deal', i * 150)}</div>)
+                                        ) : (
+                                            !p.folded && !isAwaySeat && state !== 'waiting' ? (
+                                                <div style={{ display: 'flex', gap: '2px' }}>
+                                                    <div style={{ width: '20px', height: '28px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 3px, white 3px, white 6px)', borderRadius: '2px', border: '1px solid white' }} />
+                                                    <div style={{ width: '20px', height: '28px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 3px, white 3px, white 6px)', borderRadius: '2px', border: '1px solid white' }} />
+                                                </div>
+                                            ) : null
+                                        )
+                                    )}
+                                </div>
+
+                            </div>
                         </div>
                     );
                 })}
