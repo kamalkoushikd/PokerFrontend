@@ -23,10 +23,10 @@ const PokerTable = () => {
     const [raiseAmount, setRaiseAmount] = useState(0);
     
     // Audio refs
-    const foldSound = useRef(new Audio('https://actions.google.com/sounds/v1/foley/sliding_card.ogg'));
-    const callRaiseSound = useRef(new Audio('https://actions.google.com/sounds/v1/casino/chips_stacking_short.ogg'));
-    const winSound = useRef(new Audio('https://actions.google.com/sounds/v1/cartoon/cartoon_success_fanfare.ogg'));
-    const dealSound = useRef(new Audio('https://actions.google.com/sounds/v1/foley/shuffle_cards_and_deal.ogg'));
+    const foldSound = useRef(new Audio('/sliding_card.wav'));
+    const callRaiseSound = useRef(new Audio('/chips_stacking_short.wav'));
+    const winSound = useRef(new Audio('/cartoon_success_fanfare.wav'));
+    const dealSound = useRef(new Audio('/shuffle_cards_and_deal.wav'));
     
     const ws = useRef(null);
 
