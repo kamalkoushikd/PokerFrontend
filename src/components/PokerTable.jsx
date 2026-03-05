@@ -326,7 +326,6 @@ const PokerTable = () => {
                 {players.map((p, idx) => {
                     const isCurrent = currentPlayerIndex === idx && !['waiting', 'showdown', 'allin_runout', 'post_hand_reveal'].includes(state);
                     const isMe = p.username === user.username;
-                    const showProb = (isAllinRunout || isMe) && p.winProb > 0 && !p.folded && state !== 'waiting';
                     const pos = getPlayerPosition(idx, players.length);
                     const isOffline = !p.isOnline;
                     const isAwaySeat = p.isAway;
@@ -438,13 +437,6 @@ const PokerTable = () => {
                                     </div>
                                 )}
 
-                                {showProb && (
-                                     <div className="animate-fade-in" title="Estimated win probability" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.6rem', fontWeight: 'bold', padding: '2px 5px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)', textAlign: 'center', lineHeight: 1.3 }}>
-                                        <div style={{ opacity: 0.8, fontSize: '0.5rem', letterSpacing: '0.03em' }}>WIN</div>
-                                        {p.winProb}%
-                                     </div>
-                                )}
-
                                 {p.bet > 0 && (
                                     <div key={p.bet} className="bet-appear" style={{ color: 'var(--chip-gold)', fontSize: '0.7rem', background: 'rgba(0,0,0,0.4)', padding: '1px 4px', borderRadius: '4px', marginTop: '0.2rem' }}>
                                         Bet: ${p.bet}
@@ -514,8 +506,10 @@ const PokerTable = () => {
                             {(() => {
                                 const minR = gameState.minRaise || gameState.bigBlind || 20;
                                 const myBet = myPlayer?.bet || 0;
-                                const halfPot = Math.max(gameState.currentBet + minR, gameState.currentBet + Math.round(pot / 2));
-                                const fullPot = Math.max(gameState.currentBet + minR, gameState.currentBet + pot);
+                                const bb = gameState.bigBlind || 20;
+                                const snapBB = v => Math.round(v / bb) * bb;
+                                const halfPot = snapBB(Math.max(gameState.currentBet + minR, gameState.currentBet + Math.round(pot / 2)));
+                                const fullPot = snapBB(Math.max(gameState.currentBet + minR, gameState.currentBet + pot));
                                 const allIn = myBet + (myPlayer?.chips || 0);
                                 return [
                                     { label: '½ Pot', val: halfPot },
@@ -539,7 +533,12 @@ const PokerTable = () => {
                                 className="input-field"
                                 style={{ width: '70px', padding: '0.4rem 0.5rem', flex: 1, fontSize: '0.9rem' }}
                                 value={raiseAmount}
-                                onChange={e => setRaiseAmount(Number(e.target.value))}
+                                onChange={e => {
+                                    const bb = gameState.bigBlind || 20;
+                                    const raw = Number(e.target.value);
+                                    setRaiseAmount(Math.round(raw / bb) * bb);
+                                }}
+                                step={gameState.bigBlind || 20}
                                 min={(gameState.minRaise || 20) + gameState.currentBet}
                                 disabled={!isMyTurn}
                                 onKeyDown={e => { if (e.key === 'Enter' && isMyTurn) handleAction('raise', raiseAmount); }}
