@@ -22,6 +22,9 @@ const PokerTable = () => {
     const [privateCards, setPrivateCards] = useState([]);
     const [raiseAmount, setRaiseAmount] = useState(0);
     
+    // Use a ref to track previous state for sounds (avoids re-creating WebSocket)
+    const prevStateRef = useRef(null);
+    
     // Audio refs
     const foldSound = useRef(new Audio('/sliding_card.wav'));
     const callRaiseSound = useRef(new Audio('/chips_stacking_short.wav'));
@@ -46,7 +49,7 @@ const PokerTable = () => {
             try {
                 const message = JSON.parse(event.data);
                 if (message.type === 'table_state') {
-                    const prevState = gameState;
+                    const prevState = prevStateRef.current;
                     setGameState(message.data);
                     setRaiseAmount(Math.max(message.data.currentBet * 2, 40));
                     
@@ -66,7 +69,7 @@ const PokerTable = () => {
                         // Fold sound if someone folded
                         const prevPlayers = prevState.players;
                         const newPlayers = message.data.players;
-                        if (prevPlayers.length === newPlayers.length) {
+                        if (prevPlayers && prevPlayers.length === newPlayers.length) {
                              newPlayers.forEach((np, i) => {
                                  if (!prevPlayers[i].folded && np.folded && np.username !== user?.username) {
                                      foldSound.current.play().catch(e=>console.log(e));
@@ -74,6 +77,8 @@ const PokerTable = () => {
                              });
                         }
                     }
+                    // Update the ref AFTER processing sounds
+                    prevStateRef.current = message.data;
                 } else if (message.type === 'private_state') {
                     setPrivateCards(message.data.cards || []);
                 } else if (message.type === 'error') {
@@ -97,7 +102,8 @@ const PokerTable = () => {
                 ws.current.close();
             }
         };
-    }, [tableId, user, token, navigate, gameState]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tableId, user, token, navigate]);
 
     const handleAction = (action, amount = 0) => {
         if (ws.current && ws.current.readyState === WebSocket.OPEN) {
