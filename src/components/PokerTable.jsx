@@ -103,7 +103,6 @@ const PokerTable = () => {
                 ws.current.close();
             }
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tableId, user, token, navigate]);
 
     // Countdown timer effect
@@ -122,9 +121,9 @@ const PokerTable = () => {
         return () => clearInterval(interval);
     }, [gameState?.turnDeadline]);
 
-    const handleAction = (action, amount = 0) => {
+    const handleAction = (action, amount = 0, target = '') => {
         if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            ws.current.send(JSON.stringify({ action, amount }));
+            ws.current.send(JSON.stringify({ action, amount, target }));
             if (action === 'fold') foldSound.current.play().catch(e=>console.log(e));
             if (action === 'call' || action === 'raise') callRaiseSound.current.play().catch(e=>console.log(e));
         }
@@ -161,13 +160,29 @@ const PokerTable = () => {
 
     const str_to_key = (str, i) => `${str}-${i}`;
 
+    const isHost = gameState?.hostUsername === user?.username;
+    const pendingPlayers = gameState?.pendingPlayers || [];
+
+    // Calculate positions around an ellipse for each player
+    const getPlayerPosition = (idx, total) => {
+        // Start from bottom center, go clockwise
+        const angle = (Math.PI / 2) + (2 * Math.PI * idx / total);
+        const rx = 42; // horizontal radius %
+        const ry = 38; // vertical radius %
+        return {
+            left: `${50 + rx * Math.cos(angle)}%`,
+            top: `${50 + ry * Math.sin(angle)}%`,
+        };
+    };
+
     return (
         <div style={{ padding: '0.5rem', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <header className="glass-panel" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <header className="glass-panel" style={{ padding: '0.8rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <h2 style={{ margin: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <Users size={18} /> Global Table
                     </h2>
+                    {isHost && <span style={{ fontSize: '0.7rem', background: 'var(--chip-gold)', color: '#000', padding: '1px 6px', borderRadius: '8px', fontWeight: 'bold' }}>HOST</span>}
                 </div>
                 <div style={{ color: 'var(--text-muted)', fontWeight: '500', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     Status: <span style={{ color: state === 'waiting' ? 'orange' : 'var(--accent-color)', textTransform: 'capitalize' }}>{state === 'allin_runout' ? 'All-In Runout' : state}</span>
@@ -188,105 +203,110 @@ const PokerTable = () => {
                 </button>
             </header>
 
-            <main className="poker-table-surface" style={{ flex: 1, borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', minHeight: '400px' }}>
+            {/* Host Approval Panel */}
+            {isHost && pendingPlayers.length > 0 && (
+                <div className="glass-panel animate-fade-in" style={{ padding: '0.8rem 1rem', border: '1px solid var(--chip-gold)' }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--chip-gold)', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                        🔔 Player Requests
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {pendingPlayers.map(pp => (
+                            <div key={pp.username} className="glass-card" style={{ padding: '0.5rem 0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ fontSize: '0.85rem', color: 'white' }}>{pp.fullName}</span>
+                                <button className="btn-primary" onClick={() => handleAction('approve_player', 0, pp.username)} style={{ padding: '2px 8px', fontSize: '0.75rem' }}>✓</button>
+                                <button className="btn-secondary" onClick={() => handleAction('reject_player', 0, pp.username)} style={{ padding: '2px 8px', fontSize: '0.75rem', border: '1px solid #ef4444', color: '#ef4444' }}>✗</button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <main className="poker-table-surface" style={{ flex: 1, borderRadius: 'var(--radius-lg)', position: 'relative', overflow: 'hidden', minHeight: '500px' }}>
                 
                 {/* Information Overlay */}
                 {gameState.notification && (
-                    <div className="glass-panel animate-fade-in" style={{ position: 'absolute', top: '20%', left: '50%', transform: 'translateX(-50%)', padding: '1rem', zIndex: 10,  boxShadow: '0 0 30px rgba(251, 191, 36, 0.4)', border: '1px solid var(--chip-gold)', width: '80%', maxWidth: '400px', textAlign: 'center' }}>
-                        <h3 style={{ margin: 0, color: 'var(--chip-gold)', fontSize: '1.1rem' }}>{gameState.notification}</h3>
+                    <div className="glass-panel animate-fade-in" style={{ position: 'absolute', top: '8%', left: '50%', transform: 'translateX(-50%)', padding: '0.8rem 1.5rem', zIndex: 10, boxShadow: '0 0 30px rgba(251, 191, 36, 0.4)', border: '1px solid var(--chip-gold)', maxWidth: '400px', textAlign: 'center' }}>
+                        <h3 style={{ margin: 0, color: 'var(--chip-gold)', fontSize: '1rem' }}>{gameState.notification}</h3>
                     </div>
                 )}
 
-                {/* Pot & Community Cards Container - Responsive Auto-layout via Flex */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '1rem', gap: '1rem', zIndex: 5 }}>
-                    <div className="glass-card" style={{ padding: '0.5rem 1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', borderRadius: 'var(--radius-xl)' }}>
-                        <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>POT</span>
-                        <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--chip-gold)' }}>${pot}</span>
+                {/* Center: Pot & Community Cards */}
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.8rem', zIndex: 5 }}>
+                    <div className="glass-card" style={{ padding: '0.3rem 1.2rem', display: 'flex', gap: '0.5rem', alignItems: 'center', borderRadius: 'var(--radius-xl)' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>POT</span>
+                        <span style={{ fontSize: '1.3rem', fontWeight: 'bold', color: 'var(--chip-gold)' }}>${pot}</span>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: 'var(--radius-md)', flexWrap: 'wrap', justifyContent: 'center', perspective: '600px' }}>
+                    <div style={{ display: 'flex', gap: '0.3rem', background: 'rgba(0,0,0,0.3)', padding: '0.6rem', borderRadius: 'var(--radius-md)', perspective: '600px' }}>
                         {[0, 1, 2, 3, 4].map(i => {
                             const card = communityCards[i];
-                            // Determine animation class based on which street this card belongs to
                             let animClass = 'card-flip';
                             let delay = 0;
-                            if (i < 3) {
-                                // Flop cards - staggered slide
-                                animClass = 'card-slide';
-                                delay = i * 150;
-                            } else if (i === 3) {
-                                // Turn card
-                                animClass = 'card-flip';
-                                delay = 0;
-                            } else {
-                                // River card
-                                animClass = 'card-flip';
-                                delay = 0;
-                            }
+                            if (i < 3) { animClass = 'card-slide'; delay = i * 150; }
                             return card ? renderCard(card, i, animClass, delay) : renderCard(null, i);
                         })}
                     </div>
                 </div>
 
-                {/* Players Grid (Responsive wrapper around absolute positioning/flex rules) */}
-                {/* On mobile, this overlays nicely via flex wrapping at the borders */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', padding: '0.5rem', justifyContent: 'center', background: 'rgba(0,0,0,0.2)', alignItems: 'flex-start' }}>
-                    {players.map((p, idx) => {
-                        const isCurrent = currentPlayerIndex === idx && state !== 'waiting';
-                        const isMe = p.username === user.username;
-                        // During all-in runout, show everyone's probability (cards are face-up)
-                        // Otherwise, only show own probability
-                        const showProb = (isAllinRunout || isMe) && p.winProb > 0 && !p.folded && state !== 'waiting';
+                {/* Players positioned around the table */}
+                {players.map((p, idx) => {
+                    const isCurrent = currentPlayerIndex === idx && state !== 'waiting';
+                    const isMe = p.username === user.username;
+                    const showProb = (isAllinRunout || isMe) && p.winProb > 0 && !p.folded && state !== 'waiting';
+                    const pos = getPlayerPosition(idx, players.length);
 
-                        return (
-                            <div key={p.username} className={`glass-card ${isCurrent ? 'animate-pulse' : ''}`} style={{ 
-                                padding: '0.8rem', flex: '1 1 120px', maxWidth: '180px', textAlign: 'center', position: 'relative',
-                                border: isCurrent ? `2px solid ${timeLeft !== null && timeLeft <= 3 ? '#ef4444' : 'var(--accent-color)'}` : '1px solid var(--glass-border)',
-                                opacity: p.folded ? 0.4 : 1, transition: 'all 0.3s ease'
-                            }}>
-                                <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.2rem', color: isMe ? 'var(--accent-color)' : 'white' }}>
-                                    {p.fullName || p.username} {isMe && '(You)'}
-                                </div>
-                                <div style={{ color: 'var(--chip-gold)', fontWeight: 'bold', marginBottom: '0.3rem', fontSize: '1.1rem' }}>${p.chips}</div>
-                                
-                                {showProb && (
-                                     <div className="animate-fade-in" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)', transition: 'all 0.3s ease' }}>
-                                        {p.winProb}%
-                                     </div>
-                                )}
+                    return (
+                        <div key={p.username} className={`glass-card ${isCurrent ? 'animate-pulse' : ''}`} style={{ 
+                            position: 'absolute', ...pos, transform: 'translate(-50%, -50%)',
+                            padding: '0.6rem', width: '140px', textAlign: 'center',
+                            border: isCurrent ? `2px solid ${timeLeft !== null && timeLeft <= 3 ? '#ef4444' : 'var(--accent-color)'}` : '1px solid var(--glass-border)',
+                            opacity: p.folded ? 0.4 : 1, transition: 'all 0.3s ease', zIndex: 6
+                        }}>
+                            <div style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.1rem', color: isMe ? 'var(--accent-color)' : 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {p.fullName || p.username} {isMe && '(You)'}
+                            </div>
+                            <div style={{ color: 'var(--chip-gold)', fontWeight: 'bold', fontSize: '0.95rem' }}>${p.chips}</div>
+                            
+                            {showProb && (
+                                 <div className="animate-fade-in" style={{ position: 'absolute', top: '-10px', right: '-10px', background: isAllinRunout ? 'linear-gradient(135deg, #dc2626, #f97316)' : 'linear-gradient(135deg, #2563eb, #7c3aed)', color: 'white', fontSize: '0.65rem', fontWeight: 'bold', padding: '2px 5px', borderRadius: '10px', boxShadow: isAllinRunout ? '0 2px 8px rgba(220, 38, 38, 0.5)' : '0 2px 8px rgba(124, 58, 237, 0.5)' }}>
+                                    {p.winProb}%
+                                 </div>
+                            )}
 
-                                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', background: 'rgba(0,0,0,0.4)', padding: '0.2rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
+                            {p.bet > 0 && (
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', background: 'rgba(0,0,0,0.4)', padding: '1px 4px', borderRadius: '4px', marginTop: '0.2rem' }}>
                                     Bet: ${p.bet}
                                 </div>
-                                
-                                {/* Show cards if it's us or showdown mode where cards are revealed or post_hand_reveal where specific ones are revealed */}
-                                <div style={{ display: 'flex', gap: '0.1rem', justifyContent: 'center' }}>
-                                    {(p.cards && p.cards.length > 0) ? (
-                                        p.cards.map((c, i) => <div key={i} style={{ transform: 'scale(0.8)', margin: '-5px -3px' }}>{renderCard(c, i, 'card-deal', i * 100)}</div>)
+                            )}
+                            
+                            {/* Cards */}
+                            <div style={{ display: 'flex', gap: '0.1rem', justifyContent: 'center', marginTop: '0.3rem' }}>
+                                {(p.cards && p.cards.length > 0) ? (
+                                    p.cards.map((c, i) => <div key={i} style={{ transform: 'scale(0.7)', margin: '-8px -5px' }}>{renderCard(c, i, 'card-deal', i * 100)}</div>)
+                                ) : (
+                                    isMe && privateCards.length > 0 ? (
+                                       privateCards.map((c, i) => <div key={i} style={{ transform: 'scale(0.7)', margin: '-8px -5px' }}>{renderCard(c, i, 'card-deal', i * 150)}</div>)
                                     ) : (
-                                        isMe && privateCards.length > 0 ? (
-                                           privateCards.map((c, i) => <div key={i} style={{ transform: 'scale(0.8)', margin: '-5px -3px' }}>{renderCard(c, i, 'card-deal', i * 150)}</div>)
-                                        ) : (
-                                            !p.folded && state !== 'waiting' ? (
-                                                <div style={{ display: 'flex', gap: '2px' }}>
-                                                    <div style={{ width: '25px', height: '35px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 4px, white 4px, white 8px)', borderRadius: '2px', border: '1px solid white' }} />
-                                                    <div style={{ width: '25px', height: '35px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 4px, white 4px, white 8px)', borderRadius: '2px', border: '1px solid white' }} />
-                                                </div>
-                                            ) : null
-                                        )
-                                    )}
-                                </div>
+                                        !p.folded && state !== 'waiting' ? (
+                                            <div style={{ display: 'flex', gap: '2px' }}>
+                                                <div style={{ width: '20px', height: '28px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 3px, white 3px, white 6px)', borderRadius: '2px', border: '1px solid white' }} />
+                                                <div style={{ width: '20px', height: '28px', background: 'repeating-linear-gradient(45deg, var(--suit-red) 0px, var(--suit-red) 3px, white 3px, white 6px)', borderRadius: '2px', border: '1px solid white' }} />
+                                            </div>
+                                        ) : null
+                                    )
+                                )}
                             </div>
-                        );
-                    })}
-                </div>
+
+                        </div>
+                    );
+                })}
 
             </main>
 
-            {/* Action Bar - Highly Responsive Flex Toolbar */}
-            <footer className="glass-panel" style={{ padding: '1rem', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', opacity: isMyTurn ? 1 : 0.5, transition: 'opacity 0.3s' }}>
+            {/* Action Bar */}
+            <footer className="glass-panel" style={{ padding: '0.8rem', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '0.8rem', opacity: isMyTurn ? 1 : 0.5, transition: 'opacity 0.3s' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 100px' }}>
-                     <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Current Call: <span style={{ color: 'white', fontWeight: 'bold' }}>${gameState.currentBet}</span></span>
+                     <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Call: <span style={{ color: 'white', fontWeight: 'bold' }}>${gameState.currentBet}</span></span>
                      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Your Bet: <span style={{ color: 'white', fontWeight: 'bold' }}>${myPlayer?.bet || 0}</span></span>
                 </div>
                 
@@ -317,11 +337,11 @@ const PokerTable = () => {
 
             {/* Post Hand Reveal Options */}
             {state === 'post_hand_reveal' && !myPlayer?.folded && (
-                <div className="glass-panel animate-fade-in" style={{ padding: '1rem', display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '0.5rem', border: '1px solid var(--chip-gold)' }}>
-                    <span style={{ color: 'var(--chip-gold)', fontWeight: 'bold', alignSelf: 'center' }}>You Won! Show Cards?</span>
-                    <button className="btn-secondary" onClick={() => handleAction('show_card', 0)} disabled={myPlayer.shownCards?.includes(0)}>Show Left</button>
-                    <button className="btn-secondary" onClick={() => handleAction('show_card', 1)} disabled={myPlayer.shownCards?.includes(1)}>Show Right</button>
-                    <button className="btn-primary" onClick={() => handleAction('show_card', 2)} disabled={myPlayer.shownCards?.includes(0) && myPlayer.shownCards?.includes(1)}>Show Both</button>
+                <div className="glass-panel animate-fade-in" style={{ padding: '0.8rem', display: 'flex', justifyContent: 'center', gap: '0.8rem', border: '1px solid var(--chip-gold)' }}>
+                    <span style={{ color: 'var(--chip-gold)', fontWeight: 'bold', alignSelf: 'center', fontSize: '0.9rem' }}>Show Cards?</span>
+                    <button className="btn-secondary" onClick={() => handleAction('show_card', 0)} disabled={myPlayer.shownCards?.includes(0)}>Left</button>
+                    <button className="btn-secondary" onClick={() => handleAction('show_card', 1)} disabled={myPlayer.shownCards?.includes(1)}>Right</button>
+                    <button className="btn-primary" onClick={() => handleAction('show_card', 2)} disabled={myPlayer.shownCards?.includes(0) && myPlayer.shownCards?.includes(1)}>Both</button>
                 </div>
             )}
         </div>
